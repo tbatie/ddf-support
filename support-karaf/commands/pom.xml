@@ -29,5 +29,6 @@
 
     <modules>
         <module>feature-tree</module>
+        <module>boot-ready</module>
     </modules>
 </project>
