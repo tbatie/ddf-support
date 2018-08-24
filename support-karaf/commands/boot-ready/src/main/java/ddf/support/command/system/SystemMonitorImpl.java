@@ -377,7 +377,6 @@ public class SystemMonitorImpl implements SystemMonitor {
       printInactiveBundles(LOGGER::error, LOGGER::error);
       throw new SystemMonitorException("Bundles failed to reach Active within: "  + maxWaitTime + " ms.");
     }
-
   }
 
   private Set<Bundle> getUnavailableBundles(Set<String> toCheck) throws SystemMonitorException {
@@ -418,12 +417,12 @@ public class SystemMonitorImpl implements SystemMonitor {
     System.out.println("Specified wait (ignoring, hardcoded 360000 wait): " + maxWait);
     do {
       if (conditionIsMet.call()) {
+        System.out.println("System Ready"); //There's probably a better place for this
         return true;
       } else {
         Thread.sleep(pollInterval);
       }
-    } while ((System.currentTimeMillis() - startTime) >= 360000);
-
+    } while ((System.currentTimeMillis() - startTime) <= 360000);
     System.out.println("Finish time: " + System.currentTimeMillis());
     return false;
   }
