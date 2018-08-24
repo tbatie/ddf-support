@@ -43,6 +43,7 @@ import org.osgi.service.cm.ManagedServiceFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 
 import ddf.support.command.system.api.SystemMonitor;
@@ -85,6 +86,7 @@ public class SystemMonitorImpl implements SystemMonitor {
     this.configAdmin = configAdmin;
     this.featuresService = featuresService;
     this.bundleService = bundleService;
+
   }
 
   @Override
@@ -96,6 +98,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   @Override
   public Configuration createManagedFactoryService(long maxWaitTime, String factoryPid,
           Map<String, Object> properties) throws SystemMonitorException {
+    LOGGER.debug("Creating managed service of factorypid [{}]", factoryPid);
+
     Configuration createdConfig;
     try {
       createdConfig = configAdmin.createFactoryConfiguration(factoryPid, null);
@@ -105,6 +109,8 @@ public class SystemMonitorImpl implements SystemMonitor {
                       + factoryPid,
               e);
     }
+
+    LOGGER.debug("Created factory configuration with pid of [{}]. Now updating configuration with properties.", createdConfig.getPid());
 
     try {
       createdConfig.update(new Hashtable<>(properties));
@@ -116,6 +122,7 @@ public class SystemMonitorImpl implements SystemMonitor {
     }
     // TODO: tbatie - 8/17/18 - should we try to delete managed service factory that couldn't update?
 
+    LOGGER.debug("Updated factory configuration with pid of [{}].", createdConfig.getPid());
     waitForServiceAvailability(maxWaitTime, factoryPid);
     return createdConfig;
   }
@@ -137,10 +144,8 @@ public class SystemMonitorImpl implements SystemMonitor {
             serviceListener,
             null);
 
-    Callable<Boolean> isServiceUpdated = () -> {
-      LOGGER.info("Waiting for service [{}] to reflect configuration update...", servicePid);
-      return !serviceListener.isUpdated();
-    };
+    LOGGER.debug("Updating configuration of service with pid [{}].", servicePid);
+
 
     try {
       configAdmin.getConfiguration(servicePid)
@@ -153,7 +158,14 @@ public class SystemMonitorImpl implements SystemMonitor {
       serviceListenerRef.unregister();
     }
 
+    LOGGER.debug("Updated configuration of service with pid [{}].", servicePid);
+
     boolean available;
+    Callable<Boolean> isServiceUpdated = () -> {
+      LOGGER.info("Waiting for service with pid [{}] to reflect configuration updates...", servicePid);
+      return !serviceListener.isUpdated();
+    };
+
     try {
       available = wait(isServiceUpdated, maxWaitTime, 5);
     } catch (Exception e) {
@@ -197,7 +209,7 @@ public class SystemMonitorImpl implements SystemMonitor {
     }
 
     Callable<Boolean> isServiceAvailable = () -> {
-      LOGGER.info("Waiting for service with pid of [{}] to be registered", servicePid);
+      LOGGER.info("Waiting for service with pid [{}] to be registered", servicePid);
 
       return serviceRefs.stream()
               .anyMatch(s -> servicePid.equals(s.getProperty(SERVICE_PID))) || serviceFactoryRefs.stream()
@@ -228,10 +240,13 @@ public class SystemMonitorImpl implements SystemMonitor {
   @Override
   public void installFeatures(long maxWaitTime, String feature, String... additionalFeatures)
           throws SystemMonitorException {
+
     Set<String> featuresToInstall = getFeatures(feature,
             additionalFeatures).stream().filter(f -> !featuresService.isInstalled(f))
             .map(Feature::getName)
             .collect(Collectors.toSet());
+
+    LOGGER.debug("Installing the following features: [{}]", String.join(", ", featuresToInstall));
 
     try {
       featuresService.installFeatures(featuresToInstall,
@@ -240,6 +255,8 @@ public class SystemMonitorImpl implements SystemMonitor {
       throw new SystemMonitorException(
               "Failed to install features [" + String.join(",", featuresToInstall) + "]", e);
     }
+
+    LOGGER.debug("Finished installing features.");
 
     waitForFeatures(maxWaitTime, FeatureState.Started, feature, additionalFeatures);
   }
@@ -288,7 +305,7 @@ public class SystemMonitorImpl implements SystemMonitor {
               Collectors.toList());
 
       if (!pendingFeatures.isEmpty()) {
-        LOGGER.info("Waiting for features [{}] to reach state [{}].",
+        LOGGER.info("Waiting for features [{}] to reach expected state of [{}].",
                 featuresAsString(pendingFeatures),
                 expectedState.name());
         return false;
@@ -363,6 +380,7 @@ public class SystemMonitorImpl implements SystemMonitor {
 
     Callable<Boolean> areBundlesReady = () -> getUnavailableBundles(toWaitFor).isEmpty();
 
+    LOGGER.debug("Waiting for bundles to become available.");
     boolean available;
 
     try {
@@ -393,7 +411,7 @@ public class SystemMonitorImpl implements SystemMonitor {
       BundleState bundleState = bundleInfo.getState();
       if (bundleInfo.isFragment()) {
         if (!BundleState.Resolved.equals(bundleState)) {
-          LOGGER.info("Fragment [" + bundleName + "] not ready with state [{}]",
+          LOGGER.debug("Fragment [" + bundleName + "] not ready with state [{}]",
                   bundleName,
                   bundleState);
           unavailableBundles.add(bundle);
@@ -404,26 +422,31 @@ public class SystemMonitorImpl implements SystemMonitor {
           throw new SystemMonitorException("Bundle [" + bundleName + "] failed to start up.");
         } else if (!BundleState.Active.equals(bundleState)) {
           unavailableBundles.add(bundle);
-          LOGGER.info("Bundle [{}] not ready with state [{}]", bundleName, bundleState);
+          LOGGER.debug("Bundle [{}] not ready with state [{}]", bundleName, bundleState);
         }
       }
     }
     return unavailableBundles;
   }
 
-  private boolean wait(Callable<Boolean> conditionIsMet, long maxWait, long pollInterval) throws Exception {
+  @VisibleForTesting
+  protected boolean wait(Callable<Boolean> conditionIsMet, long maxWait, long pollInterval) throws Exception {
     final long startTime = System.currentTimeMillis();
-    System.out.println("Start time: " + startTime);
-    System.out.println("Specified wait (ignoring, hardcoded 360000 wait): " + maxWait);
+    LOGGER.trace("Waiting for condition to be met. Max wait time: [{}]" + (startTime + maxWait));
+
+    // TODO: tbatie - 8/23/18 - Remove souts
     do {
       if (conditionIsMet.call()) {
-        System.out.println("System Ready"); //There's probably a better place for this
+        LOGGER.trace("Waiting condition met. Waited for [{}] ms" + (System.currentTimeMillis() - startTime));
+
         return true;
       } else {
+        LOGGER.trace("Waiting condition not met. Sleeping for [{}]", pollInterval);
         Thread.sleep(pollInterval);
       }
-    } while ((System.currentTimeMillis() - startTime) <= 360000);
-    System.out.println("Finish time: " + System.currentTimeMillis());
+    } while ((System.currentTimeMillis() - startTime) <= maxWait);
+
+    LOGGER.trace("Condition not met within [{}]", maxWait);
     return false;
   }
 
@@ -497,7 +520,6 @@ public class SystemMonitorImpl implements SystemMonitor {
 
     @Override
     public void configurationEvent(ConfigurationEvent event) {
-      LOGGER.info("Configuration event received: {}", event);
       if (event.getPid()
               .equals(pid) && ConfigurationEvent.CM_UPDATED == event.getType()) {
         updated = true;
@@ -508,4 +530,5 @@ public class SystemMonitorImpl implements SystemMonitor {
       return updated;
     }
   }
+
 }

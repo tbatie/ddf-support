@@ -88,6 +88,7 @@ public interface SystemMonitor {
   void waitForFeatures(long maxWaitTime, FeatureState expectedState, String feature,
           String... additionalFeatures) throws SystemMonitorException;
 
+  // TODO: tbatie - 8/23/18 - Should we remove the start/stop bundles? There are no waits being performed in either of these and bundles are capable of performing this operation
   /**
    * Stops the specified bundle. Waits until the bundle reaches a resolved state before returning.
    *
