@@ -1,3 +1,16 @@
+/**
+ * Copyright (c) Codice Foundation
+ *
+ * <p>This is free software: you can redistribute it and/or modify it under the terms of the GNU
+ * Lesser General Public License as published by the Free Software Foundation, either version 3 of
+ * the License, or any later version.
+ *
+ * <p>This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details. A copy of the GNU Lesser General Public
+ * License is distributed along with this program and can be found at
+ * <http://www.gnu.org/licenses/lgpl.html>.
+ */
 package ddf.support.command.system;
 
 import static org.osgi.framework.Constants.SERVICE_PID;
@@ -47,6 +60,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 
 import ddf.support.command.system.api.SystemMonitor;
+import ddf.support.command.system.api.SystemMonitorException;
 
 public class SystemMonitorImpl implements SystemMonitor {
 
@@ -69,6 +83,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   private static final long DEFAULT_MAX_SERVICE_WAIT = TimeUnit.MINUTES.toMillis(10);
 
   private static final long DEFAULT_MAX_BUNDLE_WAIT = TimeUnit.MINUTES.toMillis(10);
+
+  private static final long DEFAULT_POLLING_INTERVAL = TimeUnit.SECONDS.toMillis(3);
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SystemMonitorImpl.class);
 
@@ -105,25 +121,27 @@ public class SystemMonitorImpl implements SystemMonitor {
       createdConfig = configAdmin.createFactoryConfiguration(factoryPid, null);
     } catch (IOException e) {
       throw new SystemMonitorException(
-              "Failed to initialize managed service factory configuration with pid of: "
+              "Failed to initialize managed service factory configuration with fpid of: "
                       + factoryPid,
               e);
     }
 
-    LOGGER.debug("Created factory configuration with pid of [{}]. Now updating configuration with properties.", createdConfig.getPid());
+    LOGGER.debug(
+            "Created factory configuration with pid of [{}]. Now updating configuration with properties.",
+            createdConfig.getPid());
 
     try {
       createdConfig.update(new Hashtable<>(properties));
     } catch (IOException e) {
       throw new SystemMonitorException(
               "Failed to updated created managed service factory configuration with pid of ["
-                      + factoryPid + "]",
+                      + createdConfig.getPid() + "]",
               e);
     }
     // TODO: tbatie - 8/17/18 - should we try to delete managed service factory that couldn't update?
 
     LOGGER.debug("Updated factory configuration with pid of [{}].", createdConfig.getPid());
-    waitForServiceAvailability(maxWaitTime, factoryPid);
+    waitForServiceAvailability(maxWaitTime, createdConfig.getPid());
     return createdConfig;
   }
 
@@ -134,8 +152,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   }
 
   @Override
-  public void updateManagedService(long maxWaitTime, String servicePid, Map<String, Object> properties)
-          throws SystemMonitorException {
+  public void updateManagedService(long maxWaitTime, String servicePid,
+          Map<String, Object> properties) throws SystemMonitorException {
     waitForServiceAvailability(maxWaitTime, servicePid);
 
     ServiceConfigurationListener serviceListener = new ServiceConfigurationListener(servicePid);
@@ -145,7 +163,6 @@ public class SystemMonitorImpl implements SystemMonitor {
             null);
 
     LOGGER.debug("Updating configuration of service with pid [{}].", servicePid);
-
 
     try {
       configAdmin.getConfiguration(servicePid)
@@ -162,12 +179,13 @@ public class SystemMonitorImpl implements SystemMonitor {
 
     boolean available;
     Callable<Boolean> isServiceUpdated = () -> {
-      LOGGER.info("Waiting for service with pid [{}] to reflect configuration updates...", servicePid);
+      LOGGER.info("Waiting for service with pid [{}] to reflect configuration updates...",
+              servicePid);
       return !serviceListener.isUpdated();
     };
 
     try {
-      available = wait(isServiceUpdated, maxWaitTime, 5);
+      available = wait(isServiceUpdated, maxWaitTime, DEFAULT_POLLING_INTERVAL);
     } catch (Exception e) {
       throw new SystemMonitorException(
               "Interrupted while waiting for service with pid of [" + servicePid
@@ -212,13 +230,14 @@ public class SystemMonitorImpl implements SystemMonitor {
       LOGGER.info("Waiting for service with pid [{}] to be registered", servicePid);
 
       return serviceRefs.stream()
-              .anyMatch(s -> servicePid.equals(s.getProperty(SERVICE_PID))) || serviceFactoryRefs.stream()
+              .anyMatch(s -> servicePid.equals(s.getProperty(SERVICE_PID)))
+              || serviceFactoryRefs.stream()
               .anyMatch(s -> servicePid.equals(s.getProperty(SERVICE_FACTORYPID)));
     };
 
     boolean available;
     try {
-      available = wait(isServiceAvailable, maxWaitTime, 5);
+      available = wait(isServiceAvailable, maxWaitTime, DEFAULT_POLLING_INTERVAL);
     } catch (Exception e) {
       throw new SystemMonitorException(
               "Interrupted while waiting for service with pid of [" + servicePid
@@ -241,8 +260,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   public void installFeatures(long maxWaitTime, String feature, String... additionalFeatures)
           throws SystemMonitorException {
 
-    Set<String> featuresToInstall = getFeatures(feature,
-            additionalFeatures).stream().filter(f -> !featuresService.isInstalled(f))
+    Set<String> featuresToInstall = getFeatures(feature, additionalFeatures).stream()
+            .filter(f -> !featuresService.isInstalled(f))
             .map(Feature::getName)
             .collect(Collectors.toSet());
 
@@ -270,7 +289,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   @Override
   public void uninstallFeatures(long maxWaitTime, String feature, String... additionalFeatures)
           throws SystemMonitorException {
-    Set<String> featuresToUninstall = getFeatures(feature, additionalFeatures).stream().filter(f -> !featuresService.isInstalled(f))
+    Set<String> featuresToUninstall = getFeatures(feature, additionalFeatures).stream()
+            .filter(f -> !featuresService.isInstalled(f))
             .map(Feature::getName)
             .collect(Collectors.toSet());
 
@@ -286,23 +306,25 @@ public class SystemMonitorImpl implements SystemMonitor {
   }
 
   @Override
-  public void waitForFeatures(FeatureState expectedState, String feature, String... additionalFeatures)
-          throws SystemMonitorException {
+  public void waitForFeatures(FeatureState expectedState, String feature,
+          String... additionalFeatures) throws SystemMonitorException {
     waitForFeatures(DEFAULT_MAX_FEATURE_WAIT, expectedState, feature, additionalFeatures);
   }
 
   @Override
-  public void waitForFeatures(long maxWaitTime, FeatureState expectedState, String feature, String... additionalFeatures)
-          throws SystemMonitorException {
+  public void waitForFeatures(long maxWaitTime, FeatureState expectedState, String feature,
+          String... additionalFeatures) throws SystemMonitorException {
     waitForFeatures(maxWaitTime, expectedState, getFeatures(feature, additionalFeatures));
   }
 
-  private void waitForFeatures(long maxWaitTime, FeatureState expectedState, List<Feature> features) throws SystemMonitorException {
+  private void waitForFeatures(long maxWaitTime, FeatureState expectedState, List<Feature> features)
+          throws SystemMonitorException {
 
     Callable<Boolean> areFeaturesDone = () -> {
-      List<Feature> pendingFeatures = features.stream().filter(f ->
-              featuresService.getState(f.getName() + "/" + f.getVersion()) != expectedState).collect(
-              Collectors.toList());
+      List<Feature> pendingFeatures = features.stream()
+              .filter(f -> featuresService.getState(f.getName() + "/" + f.getVersion())
+                      != expectedState)
+              .collect(Collectors.toList());
 
       if (!pendingFeatures.isEmpty()) {
         LOGGER.info("Waiting for features [{}] to reach expected state of [{}].",
@@ -316,16 +338,17 @@ public class SystemMonitorImpl implements SystemMonitor {
 
     boolean available;
     try {
-      available = wait(areFeaturesDone, maxWaitTime, 5);
+      available = wait(areFeaturesDone, maxWaitTime, DEFAULT_POLLING_INTERVAL);
     } catch (Exception e) {
       throw new SystemMonitorException(
-              "Interrupted while waiting for features [" + featuresAsString(features) + "] to become available.", e);
+              "Interrupted while waiting for features [" + featuresAsString(features)
+                      + "] to become available.", e);
     }
 
     if (!available) {
       throw new SystemMonitorException(
-              "Features failed to reach state [" + expectedState.name() + "] within " + DEFAULT_MAX_SERVICE_WAIT
-                      + " ms.");
+              "Features failed to reach state [" + expectedState.name() + "] within "
+                      + DEFAULT_MAX_SERVICE_WAIT + " ms.");
     }
 
     waitForBundles();
@@ -341,7 +364,8 @@ public class SystemMonitorImpl implements SystemMonitor {
         try {
           bundle.stop();
         } catch (BundleException e) {
-          throw new SystemMonitorException("Failed to stop bundle [" + bundle.getSymbolicName() + "]");
+          throw new SystemMonitorException(
+                  "Failed to stop bundle [" + bundle.getSymbolicName() + "]");
         }
       }
     }
@@ -357,12 +381,12 @@ public class SystemMonitorImpl implements SystemMonitor {
         try {
           bundle.start();
         } catch (BundleException e) {
-          throw new SystemMonitorException("Failed to start bundle [" + bundle.getSymbolicName() + "]");
+          throw new SystemMonitorException(
+                  "Failed to start bundle [" + bundle.getSymbolicName() + "]");
         }
       }
     }
   }
-
 
   @Override
   public void waitForBundles(String... symbolicNames) throws SystemMonitorException {
@@ -370,7 +394,8 @@ public class SystemMonitorImpl implements SystemMonitor {
   }
 
   @Override
-  public void waitForBundles(long maxWaitTime, String... symbolicNames) throws SystemMonitorException {
+  public void waitForBundles(long maxWaitTime, String... symbolicNames)
+          throws SystemMonitorException {
     Set<String> toWaitFor = symbolicNames.length == 0 ?
             Arrays.stream(bundleContext.getBundles())
                     .map(Bundle::getSymbolicName)
@@ -384,16 +409,19 @@ public class SystemMonitorImpl implements SystemMonitor {
     boolean available;
 
     try {
-      available = wait(areBundlesReady, maxWaitTime, TimeUnit.SECONDS.toMillis(5));
-    } catch(SystemMonitorException e) {
+      available = wait(areBundlesReady, maxWaitTime, DEFAULT_POLLING_INTERVAL);
+    } catch (SystemMonitorException e) {
       throw e;
     } catch (Exception e) {
-      throw new SystemMonitorException("Interrupted while waiting for bundles to reach active state.", e);
+      throw new SystemMonitorException(
+              "Interrupted while waiting for bundles to reach active state.",
+              e);
     }
 
     if (!available) {
       printInactiveBundles(LOGGER::error, LOGGER::error);
-      throw new SystemMonitorException("Bundles failed to reach Active within: "  + maxWaitTime + " ms.");
+      throw new SystemMonitorException(
+              "Bundles failed to reach Active within: " + maxWaitTime + " ms.");
     }
   }
 
@@ -430,18 +458,16 @@ public class SystemMonitorImpl implements SystemMonitor {
   }
 
   @VisibleForTesting
-  protected boolean wait(Callable<Boolean> conditionIsMet, long maxWait, long pollInterval) throws Exception {
+  protected boolean wait(Callable<Boolean> conditionIsMet, long maxWait, long pollInterval)
+          throws Exception {
     final long startTime = System.currentTimeMillis();
-    LOGGER.trace("Waiting for condition to be met. Max wait time: [{}]" + (startTime + maxWait));
+    LOGGER.trace("Waiting for condition to be met. Max wait time: [{}] ms", (startTime + maxWait));
 
     // TODO: tbatie - 8/23/18 - Remove souts
     do {
       if (conditionIsMet.call()) {
-        LOGGER.trace("Waiting condition met. Waited for [{}] ms" + (System.currentTimeMillis() - startTime));
-
         return true;
       } else {
-        LOGGER.trace("Waiting condition not met. Sleeping for [{}]", pollInterval);
         Thread.sleep(pollInterval);
       }
     } while ((System.currentTimeMillis() - startTime) <= maxWait);
@@ -481,10 +507,11 @@ public class SystemMonitorImpl implements SystemMonitor {
     }
   }
 
-  private List<Feature> getFeatures(String feature, String... additionalFeatures) throws SystemMonitorException{
+  private List<Feature> getFeatures(String feature, String... additionalFeatures)
+          throws SystemMonitorException {
     Stream.Builder<Feature> transformedFeatures = Stream.builder();
 
-    for(String f : toList(feature, additionalFeatures)) {
+    for (String f : toList(feature, additionalFeatures)) {
       try {
         transformedFeatures.add(featuresService.getFeature(f));
       } catch (Exception e) {
@@ -492,20 +519,24 @@ public class SystemMonitorImpl implements SystemMonitor {
       }
     }
 
-    return transformedFeatures.build().collect(Collectors.toList());
+    return transformedFeatures.build()
+            .collect(Collectors.toList());
   }
 
   private String featuresAsString(List<Feature> features) {
-    return features.stream().map(Feature::getName)
+    return features.stream()
+            .map(Feature::getName)
             .collect(Collectors.joining(","));
   }
 
   private <T> List<T> toList(T ele, T... eles) {
-    return Stream.concat(Stream.of(ele), Stream.of(eles)).collect(Collectors.toList());
+    return Stream.concat(Stream.of(ele), Stream.of(eles))
+            .collect(Collectors.toList());
   }
 
   private <T> Set<T> toSet(T ele, T... eles) {
-    return Stream.concat(Stream.of(ele), Stream.of(eles)).collect(Collectors.toSet());
+    return Stream.concat(Stream.of(ele), Stream.of(eles))
+            .collect(Collectors.toSet());
   }
 
   private class ServiceConfigurationListener implements ConfigurationListener {

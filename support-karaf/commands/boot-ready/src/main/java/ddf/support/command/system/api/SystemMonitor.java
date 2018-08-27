@@ -5,8 +5,6 @@ import java.util.Map;
 import org.apache.karaf.features.FeatureState;
 import org.osgi.service.cm.Configuration;
 
-import ddf.support.command.system.SystemMonitorException;
-
 public interface SystemMonitor {
 
   /**
